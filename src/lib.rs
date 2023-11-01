@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{Data, DeriveInput, parse_macro_input};
 
 #[proc_macro_derive(EnumRotate)]
-pub fn rotate_enum(input: TokenStream) -> TokenStream {
+pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
 
@@ -22,12 +22,6 @@ pub fn rotate_enum(input: TokenStream) -> TokenStream {
         .map(|v| (&v.ident))
         .collect::<Vec<_>>();
 
-    let variants_rev = {
-        let mut tmp = variants.clone();
-        tmp.reverse();
-        tmp
-    };
-
     let tokens = quote! {
         impl ::enum_rotate::EnumRotate for #name {
             fn next(self) -> Self {
@@ -43,16 +37,22 @@ pub fn rotate_enum(input: TokenStream) -> TokenStream {
             }
 
             fn iter() -> ::enum_rotate::Iter<Self> {
-                ::enum_rotate::Iter::new(vec![ #( Self::#variants_rev ),* ])
+                ::enum_rotate::Iter::new(vec![ #( Self::#variants ),* ])
             }
 
             fn iter_from(self) -> ::enum_rotate::Iter<Self> {
-                let mut tmp = vec![ #( Self::#variants_rev ),* ];
+                let mut tmp = vec![ #( Self::#variants ),* ];
                 let index = match self {
                     #( Self::#variants => #indices, )*
                 };
-                tmp.rotate_right(index);
-                ::enum_rotate::Iter::new(tmp)
+                // If the enum has no variants, the match statement will have no branches
+                // and thus all the following code is unreachable, that is ok because if
+                // the enum is empty, this method cannot be called in the first place
+                #[allow(unreachable_code)]
+                {
+                    tmp.rotate_left(index);
+                    ::enum_rotate::Iter::new(tmp)
+                }
             }
         }
     };
