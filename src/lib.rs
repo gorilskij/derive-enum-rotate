@@ -13,6 +13,8 @@ pub fn rotate_enum(input: TokenStream) -> TokenStream {
         panic!("derive(RotateEnum) must be applied to an enum");
     };
 
+    let indices = (0..variants.len()).collect::<Vec<_>>();
+
     let nexts = variants
         .iter()
         .skip(1)
@@ -20,18 +22,37 @@ pub fn rotate_enum(input: TokenStream) -> TokenStream {
         .map(|v| (&v.ident))
         .collect::<Vec<_>>();
 
+    let variants_rev = {
+        let mut tmp = variants.clone();
+        tmp.reverse();
+        tmp
+    };
+
     let tokens = quote! {
-        impl EnumRotate for #name {
+        impl ::enum_rotate::EnumRotate for #name {
             fn next(self) -> Self {
                 match self {
-                    #(Self::#variants => Self::#nexts, )*
+                    #( Self::#variants => Self::#nexts, )*
                 }
             }
 
             fn prev(self) -> Self {
                 match self {
-                    #(Self::#nexts => Self::#variants, )*
+                    #( Self::#nexts => Self::#variants, )*
                 }
+            }
+
+            fn iter() -> ::enum_rotate::Iter<Self> {
+                ::enum_rotate::Iter::new(vec![ #( Self::#variants_rev ),* ])
+            }
+
+            fn iter_from(self) -> ::enum_rotate::Iter<Self> {
+                let mut tmp = vec![ #( Self::#variants_rev ),* ];
+                let index = match self {
+                    #( Self::#variants => #indices, )*
+                };
+                tmp.rotate_right(index);
+                ::enum_rotate::Iter::new(tmp)
             }
         }
     };
