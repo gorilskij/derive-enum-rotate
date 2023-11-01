@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, parse_macro_input};
 
-#[proc_macro_derive(RotateEnum)]
+#[proc_macro_derive(EnumRotate)]
 pub fn rotate_enum(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
@@ -21,7 +21,7 @@ pub fn rotate_enum(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>();
 
     let tokens = quote! {
-        impl RotateEnum for #name {
+        impl EnumRotate for #name {
             fn next(self) -> Self {
                 match self {
                     #(Self::#variants => Self::#nexts, )*
