@@ -1,17 +1,40 @@
 use proc_macro::TokenStream;
+use proc_macro_error::{abort, proc_macro_error};
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput};
+use syn::spanned::Spanned;
+use syn::{parse_macro_input, Data, DeriveInput, Fields};
 
+#[proc_macro_error]
 #[proc_macro_derive(EnumRotate)]
 pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let name = input.ident;
 
-    let variants = if let Data::Enum(data) = &input.data {
-        data.variants.iter().collect::<Vec<_>>()
+    let variants: Vec<_> = if let Data::Enum(data) = &input.data {
+        data.variants.iter().collect()
     } else {
-        panic!("derive(RotateEnum) must be applied to an enum");
+        let item = match input.data {
+            Data::Struct(_) => "Struct",
+            Data::Union(_) => "Union",
+            Data::Enum(_) => unreachable!(),
+        };
+        abort!(
+            input.span(),
+            "{item} {} is not an enum, EnumRotate can only be derived for enums",
+            input.ident,
+        );
     };
+
+    for variant in &variants {
+        if !matches!(variant.fields, Fields::Unit) {
+            abort!(
+                variant.span(),
+                "Variant {} is not a unit variant, all variants must be unit variants to derive EnumRotate",
+                variant.ident,
+            );
+        }
+    }
+
+    let name = input.ident;
 
     let indices = (0..variants.len()).collect::<Vec<_>>();
 
@@ -19,7 +42,7 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
         .iter()
         .skip(1)
         .chain(variants.get(0))
-        .map(|v| (&v.ident))
+        .map(|v| &v.ident)
         .collect::<Vec<_>>();
 
     let tokens = quote! {
