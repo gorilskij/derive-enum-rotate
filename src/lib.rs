@@ -59,11 +59,11 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn iter() -> ::enum_rotate::Iter<Self> {
-                ::enum_rotate::Iter::new(vec![ #( Self::#variants ),* ])
+            fn iter() -> impl Iterator<Item=Self> {
+                vec![ #( Self::#variants ),* ].into_iter()
             }
 
-            fn iter_from(self) -> ::enum_rotate::Iter<Self> {
+            fn iter_from(self) -> impl Iterator<Item=Self> {
                 let mut tmp = vec![ #( Self::#variants ),* ];
                 let index = match self {
                     #( Self::#variants => #indices, )*
@@ -74,7 +74,7 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
                 #[allow(unreachable_code)]
                 {
                     tmp.rotate_left(index);
-                    ::enum_rotate::Iter::new(tmp)
+                    tmp.into_iter()
                 }
             }
         }
