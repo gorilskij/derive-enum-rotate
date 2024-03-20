@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, parse_macro_input};
+use syn::{parse_macro_input, Data, DeriveInput};
 
 #[proc_macro_derive(EnumRotate)]
 pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
