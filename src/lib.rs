@@ -1,27 +1,36 @@
 use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use quote::{quote, ToTokens};
-use syn::spanned::Spanned;
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Token};
 
 struct IterationOrder(Vec<Ident>);
 impl syn::parse::Parse for IterationOrder {
-    // TODO: prettify errors
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let attr_content;
         input.parse::<Token![#]>()?;
         syn::bracketed!(attr_content in input);
-        let ident = attr_content.parse::<Ident>()?;
-        assert_eq!(ident, "iteration_order");
+        assert_eq!(attr_content.parse::<Ident>()?, "iteration_order");
         let paren_content;
         syn::parenthesized!(paren_content in attr_content);
-        let mut idents = vec![];
 
+        let mut idents = vec![];
         while !paren_content.is_empty() {
-            let ident = paren_content.parse::<Ident>()?;
+            let ident = match paren_content.parse::<Ident>() {
+                Ok(ident) => ident,
+                Err(_) => abort!(
+                    paren_content.span(),
+                    "Expected identifier",
+                )
+            };
             idents.push(ident);
             if !paren_content.is_empty() {
-                paren_content.parse::<Token![,]>()?;
+                match paren_content.parse::<Token![,]>() {
+                    Ok(_) => {}
+                    Err(_) => abort!(
+                        paren_content.span(),
+                        "Expected comma (,)",
+                    ),
+                };
             }
         }
         Ok(Self(idents))
@@ -32,17 +41,22 @@ impl syn::parse::Parse for IterationOrder {
 #[proc_macro_derive(EnumRotate, attributes(iteration_order))]
 pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let input_span = input.span();
 
-    // TODO: crash if multiple attributes are present
-    let iteration_order: Option<IterationOrder> = input
-        .attrs
-        .iter()
-        .filter(|a| a.path().segments.len() == 1 && a.path().segments[0].ident == "iteration_order")
+    let mut attr_iter = input.attrs.iter().filter(|a| {
+        a.path().segments.len() == 1 && a.path().segments[0].ident == "iteration_order"
+    });
+    let iteration_order: Option<IterationOrder> = attr_iter
         .next()
         .map(|a| syn::parse2(a.to_token_stream()).expect("Failed to parse"));
+    // Crash if multiple #[iteration_order(...)] attributes are present
+    if let Some(repeated_attr) = attr_iter.next() {
+        abort!(
+            repeated_attr,
+            "Duplicate \"iteration_order\" attribute, please specify at most one iteration order",
+        );
+    }
 
-    let enum_data = match input.data {
+    let enum_data = match &input.data {
         Data::Enum(data) => Ok(data),
         Data::Struct(_) => Err("Struct"),
         Data::Union(_) => Err("Union"),
@@ -50,7 +64,7 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
     let enum_data = match enum_data {
         Ok(data) => data,
         Err(item) => abort!(
-            input_span,
+            input,
             "{item} {} is not an enum, EnumRotate can only be derived for enums",
             input.ident,
         ),
@@ -58,17 +72,16 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
 
     let variants: Vec<_> = enum_data.variants.iter().collect();
 
+    // TODO: support empty variants: A(), A {}
     for variant in &variants {
         if !matches!(variant.fields, Fields::Unit) {
             abort!(
-                variant.span(),
+                variant,
                 "Variant {} is not a unit variant, all variants must be unit variants to derive EnumRotate",
                 variant.ident,
             );
         }
     }
-
-    // TODO: validate custom iteration order
 
     let name = input.ident;
     let indices = (0..variants.len()).collect::<Vec<_>>();
