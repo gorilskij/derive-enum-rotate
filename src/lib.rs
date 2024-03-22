@@ -1,9 +1,14 @@
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use proc_macro_error::{abort, proc_macro_error};
 use quote::{quote, ToTokens};
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Token};
 
-struct IterationOrder(Vec<Ident>);
+struct IterationOrder {
+    idents: Vec<Ident>,
+    idents_span: Span,
+}
+
 impl syn::parse::Parse for IterationOrder {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let attr_content;
@@ -17,23 +22,20 @@ impl syn::parse::Parse for IterationOrder {
         while !paren_content.is_empty() {
             let ident = match paren_content.parse::<Ident>() {
                 Ok(ident) => ident,
-                Err(_) => abort!(
-                    paren_content.span(),
-                    "Expected identifier",
-                )
+                Err(_) => abort!(paren_content.span(), "Expected identifier",),
             };
             idents.push(ident);
             if !paren_content.is_empty() {
                 match paren_content.parse::<Token![,]>() {
                     Ok(_) => {}
-                    Err(_) => abort!(
-                        paren_content.span(),
-                        "Expected comma (,)",
-                    ),
+                    Err(_) => abort!(paren_content.span(), "Expected comma (,)",),
                 };
             }
         }
-        Ok(Self(idents))
+        Ok(Self {
+            idents,
+            idents_span: paren_content.span().into(),
+        })
     }
 }
 
@@ -72,6 +74,50 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
 
     let variants: Vec<_> = enum_data.variants.iter().collect();
 
+    // Validate custom iteration order
+    if let Some(iteration_order) = &iteration_order {
+        let expected_len = variants.len();
+        let got_len = iteration_order.idents.len();
+        if got_len != expected_len {
+            abort!(
+                iteration_order.idents_span,
+                "Expected {} items in the iteration order but got {}",
+                expected_len, got_len;
+                note = "Enum `{}` has {} variants", input.ident, expected_len;
+                note = "Each variant should appear exactly once in the iteration order";
+            );
+        }
+
+        if let Some(invalid) = iteration_order
+            .idents
+            .iter()
+            .filter(|ident| !variants.iter().any(|var| var.ident == **ident))
+            .next()
+        {
+            abort!(
+                iteration_order.idents_span,
+                "Invalid variant for enum `{}`: {}",
+                input.ident, invalid;
+                note = "The iteration order can only contain variants of `{}`",
+                input.ident;
+            );
+        }
+
+        if let Some(missing) = variants
+            .iter()
+            .filter(|var| !iteration_order.idents.contains(&var.ident))
+            .next()
+        {
+            abort!(
+                iteration_order.idents_span,
+                "Variant {} not covered",
+                missing.ident;
+                note = "Each variant of `{}` should appear exactly once in the iteration order",
+                input.ident;
+            );
+        }
+    }
+
     // TODO: support empty variants: A(), A {}
     for variant in &variants {
         if !matches!(variant.fields, Fields::Unit) {
@@ -86,7 +132,7 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
     let name = input.ident;
     let indices = (0..variants.len()).collect::<Vec<_>>();
     let map_from = iteration_order
-        .map(|io| io.0)
+        .map(|io| io.idents)
         .unwrap_or_else(|| variants.iter().map(|var| var.ident.clone()).collect());
     let map_to = if map_from.is_empty() {
         vec![]
