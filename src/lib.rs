@@ -16,6 +16,8 @@ impl syn::parse::Parse for IterationOrder {
         syn::bracketed!(attr_content in input);
         assert_eq!(attr_content.parse::<Ident>()?, "iteration_order");
         let paren_content;
+
+        // TODO: output a nice error message if this fails ("#[iteration_order]")
         syn::parenthesized!(paren_content in attr_content);
 
         let mut idents = vec![];
@@ -47,9 +49,11 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
     let mut attr_iter = input.attrs.iter().filter(|a| {
         a.path().segments.len() == 1 && a.path().segments[0].ident == "iteration_order"
     });
+
     let iteration_order: Option<IterationOrder> = attr_iter
         .next()
         .map(|a| syn::parse2(a.to_token_stream()).expect("Failed to parse"));
+
     // Crash if multiple #[iteration_order(...)] attributes are present
     if let Some(repeated_attr) = attr_iter.next() {
         abort!(
@@ -130,48 +134,73 @@ pub fn derive_enum_rotate(input: TokenStream) -> TokenStream {
     }
 
     let name = input.ident;
-    let indices = (0..variants.len()).collect::<Vec<_>>();
-    let map_from = iteration_order
-        .map(|io| io.idents)
-        .unwrap_or_else(|| variants.iter().map(|var| var.ident.clone()).collect());
-    let map_to = if map_from.is_empty() {
-        vec![]
+    let tokens = if variants.is_empty() {
+        // Special case for empty enums
+        quote! {
+            impl ::enum_rotate::EnumRotate for #name {
+                fn next(&self) -> Self {
+                    unsafe {
+                        ::std::hint::unreachable_unchecked()
+                    }
+                }
+
+                fn prev(&self) -> Self {
+                    unsafe {
+                        ::std::hint::unreachable_unchecked()
+                    }
+                }
+
+                fn iter() -> impl Iterator<Item=Self> {
+                    ::std::iter::empty()
+                }
+
+                fn iter_from(&self) -> impl Iterator<Item=Self> {
+                    unsafe {
+                        ::std::hint::unreachable_unchecked();
+                    }
+                    // This is necessary because "() is not an iterator"
+                    #[allow(unreachable_code)]
+                    ::std::iter::empty()
+                }
+            }
+        }
     } else {
-        let mut vec = map_from.clone();
-        vec.rotate_left(1);
-        vec
-    };
+        // Base case for non-empty enums
+        let map_from = iteration_order
+            .map(|io| io.idents)
+            .unwrap_or_else(|| variants.iter().map(|var| var.ident.clone()).collect());
+        let map_to = {
+            let mut vec = map_from.clone();
+            vec.rotate_left(1);
+            vec
+        };
 
-    let tokens = quote! {
-        impl ::enum_rotate::EnumRotate for #name {
-            fn next(self) -> Self {
-                match self {
-                    #( Self::#map_from => Self::#map_to, )*
+        quote! {
+            impl ::enum_rotate::EnumRotate for #name {
+                fn next(&self) -> Self {
+                    match self {
+                        #( Self::#map_from => Self::#map_to, )*
+                    }
                 }
-            }
 
-            fn prev(self) -> Self {
-                match self {
-                    #( Self::#map_to => Self::#map_from, )*
+                fn prev(&self) -> Self {
+                    match self {
+                        #( Self::#map_to => Self::#map_from, )*
+                    }
                 }
-            }
 
-            fn iter() -> impl Iterator<Item=Self> {
-                vec![ #( Self::#map_from ),* ].into_iter()
-            }
+                fn iter() -> impl Iterator<Item=Self> {
+                    vec![ #( Self::#map_from ),* ].into_iter()
+                }
 
-            fn iter_from(self) -> impl Iterator<Item=Self> {
-                let mut tmp = vec![ #( Self::#map_from ),* ];
-                let index = match self {
-                    #( Self::#map_from => #indices, )*
-                };
-                // If the enum has no variants, the match statement will have no branches
-                // and thus all the following code is unreachable, that is ok because if
-                // the enum is empty, this method cannot be called in the first place
-                #[allow(unreachable_code)]
-                {
-                    tmp.rotate_left(index);
-                    tmp.into_iter()
+                fn iter_from(&self) -> impl Iterator<Item=Self> {
+                    let mut vars = vec![ #( Self::#map_from ),* ];
+                    let index = vars.iter().position(|var| {
+                        ::std::mem::discriminant(var) == ::std::mem::discriminant(self)
+                    }).unwrap();
+
+                    vars.rotate_left(index);
+                    vars.into_iter()
                 }
             }
         }
